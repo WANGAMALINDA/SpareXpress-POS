@@ -1053,6 +1053,8 @@ let salesHistory = [];
 let activeTab = 'pos';
 let activeCat = 'ALL';
 let editingId = null;
+let remoteEnabled = true;
+let remoteProductIds = new Set();
 
 async function runSupabaseQuery(action) {
   try {
@@ -1066,6 +1068,7 @@ async function runSupabaseQuery(action) {
 async function syncFromSupabase() {
   const { data, error } = await runSupabaseQuery(() => supabaseClient.from('products').select('*').order('id', { ascending: true }));
   if (error || !data) {
+    remoteEnabled = false;
     showNotif('Unable to load remote inventory, using local fallback', false);
     products = [...initialProducts];
     return;
@@ -1079,6 +1082,7 @@ async function syncFromSupabase() {
     price: Number(p.price),
     stock: Number(p.stock),
   }));
+  remoteProductIds = new Set(products.map(p => p.id));
   nextId = Math.max(...products.map(p => p.id), nextId) + 1;
 }
 
@@ -1095,8 +1099,9 @@ async function loadSalesHistory() {
 }
 
 async function saveProductToDB(product) {
+  if (!remoteEnabled) return null;
+
   const payload = {
-    id: product.id,
     name: product.name,
     category: product.cat,
     size: product.size || '',
@@ -1104,23 +1109,41 @@ async function saveProductToDB(product) {
     price: product.price,
     stock: product.stock,
   };
-  const { data, error } = await runSupabaseQuery(() => supabaseClient.from('products').upsert(payload, { onConflict: 'id' }).select().single());
+
+  let result;
+  if (product.id && remoteProductIds.has(product.id)) {
+    result = await runSupabaseQuery(() => supabaseClient.from('products').update(payload).eq('id', product.id).select().single());
+  } else {
+    result = await runSupabaseQuery(() => supabaseClient.from('products').insert(payload).select().single());
+  }
+
+  const { data, error } = result || {};
   if (error) {
-    showNotif('Remote save failed; changes remain local', false);
+    const message = error.message || 'Unknown remote save error';
+    console.error('Supabase saveProductToDB error:', error);
+    showNotif(`Remote save failed: ${message}`, false);
     return null;
   }
-  if (data && data.id && data.id !== product.id) {
+  if (data && data.id) {
     product.id = data.id;
+    remoteProductIds.add(data.id);
   }
   return data;
 }
 
 async function deleteProductFromDB(id) {
+  if (!remoteEnabled || !remoteProductIds.has(id)) return;
   const { error } = await runSupabaseQuery(() => supabaseClient.from('products').delete().eq('id', id));
-  if (error) showNotif('Delete failed on remote DB', false);
+  if (error) {
+    const message = error.message || 'Unknown delete error';
+    console.error('Supabase deleteProductFromDB error:', error);
+    showNotif(`Delete failed on remote DB: ${message}`, false);
+  }
 }
 
 async function saveSaleToDB(sale) {
+  if (!remoteEnabled) return;
+
   const payload = {
     ref: sale.ref,
     customer: sale.customer,
@@ -1132,10 +1155,15 @@ async function saveSaleToDB(sale) {
     sale_time: sale.time.toISOString(),
   };
   const { error } = await runSupabaseQuery(() => supabaseClient.from('sales').insert(payload));
-  if (error) showNotif('Sale saved locally but remote record failed', false);
+  if (error) {
+    const message = error.message || 'Unknown sale save error';
+    console.error('Supabase saveSaleToDB error:', error);
+    showNotif(`Sale save failed remotely: ${message}`, false);
+  }
 }
 
 async function updateRemoteProductStock(id, stock) {
+  if (!remoteEnabled || !remoteProductIds.has(id)) return;
   const { error } = await runSupabaseQuery(() => supabaseClient.from('products').update({ stock }).eq('id', id));
   if (error) console.warn('Remote stock update failed for', id, error);
 }
