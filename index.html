@@ -1000,11 +1000,19 @@
 <!-- NOTIFICATION -->
 <div class="notif" id="notif"></div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script>
+// ============================================================
+// SUPABASE CONFIGURATION
+// ============================================================
+const SUPABASE_URL = 'https://vyutrlykxskjaaiaeavv.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_4E01IMGQIzlD6huX_spMUQ_GXRcwd0r';
+const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
 // ============================================================
 // SHARED PRODUCT CATALOG (synced from main site)
 // ============================================================
-let products = [
+const initialProducts = [
   { id: 1,  cat: 'FLUIDS',     name: 'Engine Oil 5W-30 Synthetic',  size: '5L',    desc: 'Premium fully synthetic motor oil.',               price: 449,  stock: 20 },
   { id: 2,  cat: 'FLUIDS',     name: 'Brake Fluid DOT 4',           size: '500ml', desc: 'High-boiling-point brake fluid.',                  price: 89,   stock: 35 },
   { id: 3,  cat: 'FLUIDS',     name: 'Coolant / Antifreeze',        size: '5L',    desc: 'Long-life ethylene glycol coolant.',               price: 159,  stock: 18 },
@@ -1036,6 +1044,7 @@ let products = [
   { id: 27, cat: 'BODY',       name: 'Alternator',                  size: '',      desc: 'Original alternator.',                             price: 300,  stock: 7  },
 ];
 
+let products = [];
 let nextId = 100;
 let cart = {};
 let discountType = 'R';
@@ -1044,6 +1053,102 @@ let salesHistory = [];
 let activeTab = 'pos';
 let activeCat = 'ALL';
 let editingId = null;
+
+async function runSupabaseQuery(action) {
+  try {
+    return await action();
+  } catch (error) {
+    console.error('Supabase query error:', error);
+    return { error };
+  }
+}
+
+async function syncFromSupabase() {
+  const { data, error } = await runSupabaseQuery(() => supabaseClient.from('products').select('*').order('id', { ascending: true }));
+  if (error || !data) {
+    showNotif('Unable to load remote inventory, using local fallback', false);
+    products = [...initialProducts];
+    return;
+  }
+  products = data.map(p => ({
+    id: p.id,
+    cat: p.category || p.cat,
+    name: p.name,
+    size: p.size || '',
+    desc: p.description || p.desc || '',
+    price: Number(p.price),
+    stock: Number(p.stock),
+  }));
+  nextId = Math.max(...products.map(p => p.id), nextId) + 1;
+}
+
+async function loadSalesHistory() {
+  const { data, error } = await runSupabaseQuery(() => supabaseClient.from('sales').select('*').order('sale_time', { ascending: false }));
+  if (error || !data) {
+    return;
+  }
+  salesHistory = data.map(s => ({
+    ...s,
+    items: Array.isArray(s.items) ? s.items : JSON.parse(s.items || '[]'),
+    time: new Date(s.sale_time || s.created_at || new Date()),
+  }));
+}
+
+async function saveProductToDB(product) {
+  const payload = {
+    id: product.id,
+    name: product.name,
+    category: product.cat,
+    size: product.size || '',
+    description: product.desc || '',
+    price: product.price,
+    stock: product.stock,
+  };
+  const { data, error } = await runSupabaseQuery(() => supabaseClient.from('products').upsert(payload, { onConflict: 'id' }).select().single());
+  if (error) {
+    showNotif('Remote save failed; changes remain local', false);
+    return null;
+  }
+  if (data && data.id && data.id !== product.id) {
+    product.id = data.id;
+  }
+  return data;
+}
+
+async function deleteProductFromDB(id) {
+  const { error } = await runSupabaseQuery(() => supabaseClient.from('products').delete().eq('id', id));
+  if (error) showNotif('Delete failed on remote DB', false);
+}
+
+async function saveSaleToDB(sale) {
+  const payload = {
+    ref: sale.ref,
+    customer: sale.customer,
+    items: sale.items.map(i => ({ id: i.id, name: i.name, qty: i.qty, price: i.price })),
+    subtotal: sale.subtotal,
+    discount: sale.discount,
+    grand: sale.grand,
+    method: sale.method,
+    sale_time: sale.time.toISOString(),
+  };
+  const { error } = await runSupabaseQuery(() => supabaseClient.from('sales').insert(payload));
+  if (error) showNotif('Sale saved locally but remote record failed', false);
+}
+
+async function updateRemoteProductStock(id, stock) {
+  const { error } = await runSupabaseQuery(() => supabaseClient.from('products').update({ stock }).eq('id', id));
+  if (error) console.warn('Remote stock update failed for', id, error);
+}
+
+function initApp() {
+  syncFromSupabase().then(() => {
+    loadSalesHistory().then(() => {
+      renderPOS();
+      if (activeTab === 'inventory') renderInventory();
+      if (activeTab === 'sales') renderSales();
+    });
+  });
+}
 
 // ============================================================
 // UTILS
@@ -1280,7 +1385,10 @@ function processCharge() {
   // Deduct stock
   items.forEach(item => {
     const p = products.find(x => x.id === item.id);
-    if (p) p.stock = Math.max(0, p.stock - item.qty);
+    if (p) {
+      p.stock = Math.max(0, p.stock - item.qty);
+      updateRemoteProductStock(p.id, p.stock);
+    }
   });
 
   // Record sale
@@ -1291,6 +1399,7 @@ function processCharge() {
     time: now,
   };
   salesHistory.unshift(sale);
+  saveSaleToDB(sale);
 
   // Show receipt
   showReceipt(sale);
@@ -1387,6 +1496,7 @@ function adjustStock(id, delta) {
   p.stock = Math.max(0, p.stock + delta);
   renderInventory();
   renderPOS();
+  saveProductToDB(p);
 }
 
 function setStock(id, val) {
@@ -1395,6 +1505,7 @@ function setStock(id, val) {
   p.stock = Math.max(0, parseInt(val) || 0);
   renderInventory();
   renderPOS();
+  saveProductToDB(p);
 }
 
 function updatePrice(id, val) {
@@ -1403,6 +1514,7 @@ function updatePrice(id, val) {
   p.price = Math.max(0, parseFloat(val) || 0);
   renderPOS();
   updateTotals();
+  saveProductToDB(p);
 }
 
 function deleteProduct(id) {
@@ -1412,6 +1524,7 @@ function deleteProduct(id) {
   renderInventory();
   renderPOS();
   updateTotals();
+  deleteProductFromDB(id);
   showNotif('Product deleted');
 }
 
@@ -1463,10 +1576,12 @@ function saveProduct() {
 
   if (editingId !== null) {
     const p = products.find(x => x.id === editingId);
-    if (p) { p.name = name; p.cat = cat; p.price = price; p.size = size; p.stock = stock; p.desc = desc; }
+    if (p) { p.name = name; p.cat = cat; p.price = price; p.size = size; p.stock = stock; p.desc = desc; saveProductToDB(p); }
     showNotif('Product updated');
   } else {
-    products.push({ id: nextId++, cat, name, size, desc, price, stock });
+    const newProduct = { id: nextId++, cat, name, size, desc, price, stock };
+    products.push(newProduct);
+    saveProductToDB(newProduct);
     showNotif('Product added');
   }
 
@@ -1545,7 +1660,7 @@ function showNotif(msg, success = false) {
 // ============================================================
 // INIT
 // ============================================================
-renderPOS();
+initApp();
 </script>
 </body>
 </html>
