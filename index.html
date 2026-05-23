@@ -1786,8 +1786,8 @@ async function processOrder(orderId) {
   const order = ordersHistory.find(o => o.id === orderId);
   if (!order || order.status === 'PROCESSED') return;
 
-  // Update order status first
-  const upd = await runSupabaseQuery(() => supabaseClient.from('orders').update({ status: 'PROCESSED', processed_at: new Date().toISOString() }).eq('id', orderId).select().single());
+  // Update order status first without requesting a returned row
+  const upd = await runSupabaseQuery(() => supabaseClient.from('orders').update({ status: 'PROCESSED', processed_at: new Date().toISOString() }).eq('id', orderId));
   if (upd && upd.error) {
     console.error('Failed to update order status', upd.error);
     showNotif('Unable to process order', false);
@@ -1810,7 +1810,7 @@ async function processOrder(orderId) {
     sale_time: new Date().toISOString(),
   };
 
-  const saleRes = await runSupabaseQuery(() => supabaseClient.from('sales').insert(salePayload).select().single());
+  const saleRes = await runSupabaseQuery(() => supabaseClient.from('sales').insert(salePayload).select().maybeSingle());
   if (saleRes && saleRes.error) {
     console.error('Failed to create sales record for order', saleRes.error);
     // Still show processed status but notify about sale failure
