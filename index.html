@@ -1201,6 +1201,7 @@ async function loadOrdersHistory() {
   }
   ordersHistory = data.map(o => ({
     ...o,
+    status: o.status || 'NEW',
     items: Array.isArray(o.items) ? o.items : JSON.parse(o.items || '[]'),
     created_at: new Date(o.created_at || new Date()),
     processed_at: o.processed_at ? new Date(o.processed_at) : null,
@@ -1285,6 +1286,16 @@ function initApp() {
     if (activeTab === 'sales') renderSales();
     if (activeTab === 'orders') renderOrders();
   });
+  
+  // Auto-refresh orders every 30 seconds when on Orders tab
+  setInterval(() => {
+    if (activeTab === 'orders') {
+      loadOrdersHistory().then(() => {
+        // Only re-render if the tab is still showing orders
+        if (activeTab === 'orders') renderOrders();
+      });
+    }
+  }, 30000);
 }
 
 // ============================================================
@@ -1331,7 +1342,10 @@ function switchTab(tab, btn) {
   if (btn) btn.classList.add('active');
   if (tab === 'inventory') renderInventory();
   if (tab === 'sales') renderSales();
-  if (tab === 'orders') renderOrders();
+  if (tab === 'orders') {
+    // Always reload orders from database when switching to orders tab
+    loadOrdersHistory().then(renderOrders);
+  }
 }
 
 // ============================================================
@@ -1779,24 +1793,42 @@ function renderSales() {
 }
 
 function refreshOrders() {
-  loadOrdersHistory().then(renderOrders);
+  showNotif('Refreshing orders...', false);
+  loadOrdersHistory().then(() => {
+    renderOrders();
+    showNotif('Orders refreshed', true);
+  }).catch(err => {
+    console.error('Error refreshing orders:', err);
+    showNotif('Error refreshing orders', false);
+  });
 }
 
 async function processOrder(orderId) {
   const order = ordersHistory.find(o => o.id === orderId);
-  if (!order || order.status === 'PROCESSED') return;
-
-  // Update order status first without requesting a returned row
-  const upd = await runSupabaseQuery(() => supabaseClient.from('orders').update({ status: 'PROCESSED', processed_at: new Date().toISOString() }).eq('id', orderId));
-  if (upd && upd.error) {
-    console.error('Failed to update order status', upd.error);
-    showNotif('Unable to process order', false);
+  if (!order) {
+    showNotif('Order not found', false);
+    return;
+  }
+  if (order.status === 'PROCESSED') {
+    showNotif('Order already processed', true);
     return;
   }
 
-  // mark locally
-  order.status = 'PROCESSED';
-  order.processed_at = new Date();
+  const now = new Date().toISOString();
+  
+  // Update order status in database
+  const updateResult = await runSupabaseQuery(() => 
+    supabaseClient
+      .from('orders')
+      .update({ status: 'PROCESSED', processed_at: now })
+      .eq('id', orderId)
+  );
+
+  if (updateResult && updateResult.error) {
+    console.error('Failed to update order status', updateResult.error);
+    showNotif('Unable to process order: ' + (updateResult.error.message || 'Database error'), false);
+    return;
+  }
 
   // Create a sales record based on the order
   const salePayload = {
@@ -1807,32 +1839,24 @@ async function processOrder(orderId) {
     discount: 0,
     grand: order.total || 0,
     method: 'ORDER',
-    sale_time: new Date().toISOString(),
+    sale_time: now,
   };
 
-  const saleRes = await runSupabaseQuery(() => supabaseClient.from('sales').insert(salePayload).select().maybeSingle());
+  const saleRes = await runSupabaseQuery(() => supabaseClient.from('sales').insert(salePayload));
   if (saleRes && saleRes.error) {
     console.error('Failed to create sales record for order', saleRes.error);
     // Still show processed status but notify about sale failure
+    await loadOrdersHistory();
     renderOrders();
-    showNotif('Order processed (sale record failed)', true);
+    showNotif('✓ Order marked as processed (sale record failed)', true);
     return;
   }
 
-  const saleData = (saleRes && saleRes.data) ? saleRes.data : (saleRes || null);
-  if (saleData) {
-    const saleObj = {
-      ...saleData,
-      items: Array.isArray(saleData.items) ? saleData.items : JSON.parse(saleData.items || '[]'),
-      time: new Date(saleData.sale_time || saleData.created_at || new Date()),
-      grand: Number(saleData.grand || saleData.total || 0),
-    };
-    salesHistory.unshift(saleObj);
-  }
-
+  // Reload orders from database to confirm the update persisted
+  await loadOrdersHistory();
   renderSales();
   renderOrders();
-  showNotif('Order processed and recorded as sale', true);
+  showNotif('✓ Order processed and recorded as sale', true);
 }
 
 function renderOrders() {
@@ -1939,7 +1963,7 @@ function closeOrderDetails() {
 function printOrderReceipt(orderId) {
   const order = ordersHistory.find(o => o.id === orderId);
   if (!order) return;
-  const company = 'Malinda Torque & Fluids';
+  const company = 'SpareXpress Auto (pty) ltd';
   const itemsHtml = (order.items || []).map(i => {
     const line = (i.price ? Number(i.price) : 0) * (i.qty || 0);
     return `<tr><td style="padding:6px 0">${escapeHtml(i.name || '')}</td><td style="text-align:center">${i.qty || 0}</td><td style="text-align:right">${fmt(i.price || 0)}</td><td style="text-align:right">${fmt(line)}</td></tr>`;
