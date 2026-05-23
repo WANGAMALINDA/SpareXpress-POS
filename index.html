@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SPAREXPRESS — Point of Sale</title>
+<title>SpareXpress Auto — Point of Sale</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;800&family=Barlow:wght@300;400;500;600&display=swap" rel="stylesheet">
 <style>
@@ -213,7 +213,7 @@ s
     flex-direction: column;
     gap: 4px;
     position: relative;
-    overflow: hidden;
+    overflow: visible;
   }
   .prod-card::after {
     content: '';
@@ -244,6 +244,7 @@ s
     color: #fff;
   }
   .prod-size { font-size: 11px; color: var(--muted); }
+  .prod-desc { font-size: 12px; color: var(--muted); margin-top:4px; max-height:36px; overflow:visible; text-overflow:ellipsis; }
   .prod-bottom { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; }
   .prod-price {
     font-family: 'Barlow Condensed', sans-serif;
@@ -541,6 +542,16 @@ s
   .inv-panel::-webkit-scrollbar { width: 5px; }
   .inv-panel::-webkit-scrollbar-track { background: var(--bg); }
   .inv-panel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  /* FOOTER */
+  .footer-grid { display: grid; grid-template-columns: 1fr; padding: 7px; background: var(--bg3); border-top: 1px solid var(--border); }
+  .footer-brand { color: var(--text); }
+  .footer-brand p { color: var(--muted); margin-top:8px; font-size:13px; }
+  .nav-logo { display:flex; align-items:center; gap:10px; }
+  .nav-logo .icon-wrap { width:34px; height:28px; display:flex; align-items:center; justify-content:center; border-radius:3px; background:var(--orange); }
+  .nav-logo-text { font-family: 'Barlow Condensed', sans-serif; font-weight:700; letter-spacing:1px; }
+  .footer-col h4 { font-family: 'Barlow Condensed', sans-serif; font-size:12px; font-weight:800; color:var(--text); margin-bottom:8px; letter-spacing:1px; }
+  .footer-col p { color:var(--muted); font-size:13px; line-height:1.4; }
+  .footer-bottom { text-align:center; padding:12px 18px; font-size:12px; color:var(--muted); background:transparent; border-top:1px solid rgba(255,255,255,0.02); }
 
   .inv-toolbar {
     display: flex;
@@ -823,9 +834,9 @@ s
       <div class="icon-wrap">
         <svg viewBox="0 0 24 24"><path d="M22.7 19l-9.1-9.1c.9-2.3.4-5-1.5-6.9-2-2-5-2.4-7.4-1.3L9 6 6 9 1.6 4.7C.4 7.1.9 10.1 2.9 12.1c1.9 1.9 4.6 2.4 6.9 1.5l9.1 9.1c.4.4 1 .4 1.4 0l2.3-2.3c.5-.4.5-1.1.1-1.4z"/></svg>
       </div>
-      <span class="logo-text">SPARE <span>XPRESS</span></span>
+      <span class="logo-text">SPARE<span>XPRESS</span> Auto</span>
     </div>
-    <span class="pos-badge">POS</span>
+    <span class="pos-badge">Point Of Sales</span>
   </div>
   <div class="topbar-right">
     <div class="topbar-info">
@@ -965,7 +976,7 @@ s
   <div class="receipt-modal">
     <div class="receipt-header">
       <div class="brand">SPAREXPRESS Auto (PTY) LTD</div>
-      <div class="sub">SPARE&amp;XPRESS — 0157 Thatchfield, Centurion</div>
+      <div class="sub">SpareXpress Auto (pty) ltd — 0157 Thatchfield, Centurion</div>
     </div>
     <div class="receipt-body">
       <div class="receipt-meta">
@@ -987,7 +998,7 @@ s
         <span>Cashier: <span style="color:var(--text);">Admin</span></span>
       </div>
       <div class="receipt-footer">
-        WhatsApp: 073 022 1618| sparexpressauto@gmail.com<br>
+        WhatsApp: 073 022 1618 | sparexpressauto@gmail.com<br>
         Thank you for your business!
       </div>
     </div>
@@ -1048,8 +1059,25 @@ s
   </div>
 </div>
 
+
+
 <!-- NOTIFICATION -->
 <div class="notif" id="notif"></div>
+
+<footer>
+  <div class="footer-grid">
+    <div class="footer-brand">
+      <div class="nav-logo">
+        <div class="icon-wrap">
+          <svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:#0e0e0e;"><path d="M22.7 19l-9.1-9.1c.9-2.3.4-5-1.5-6.9-2-2-5-2.4-7.4-1.3L9 6 6 9 1.6 4.7C.4 7.1.9 10.1 2.9 12.1c1.9 1.9 4.6 2.4 6.9 1.5l9.1 9.1c.4.4 1 .4 1.4 0l2.3-2.3c.5-.4.5-1.1.1-1.4z"/></svg>
+        </div>
+        <span class="nav-logo-text" style="font-size:14px;">SPARE<span>XPRESS</span> Auto (pty) Ltd</span>
+      </div>
+      <p>Quality car parts and fluids. Delivery &amp; pickup across the area.</p>
+    </div>
+  </div>
+  <div class="footer-bottom">© 2026 SPAREXPRESS Auto (pty) ltd. All prices in ZAR.</div>
+</footer>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script>
@@ -1312,6 +1340,7 @@ function renderPOS() {
       <div class="prod-cat-tag">${p.cat}</div>
       <div class="prod-name">${p.name}</div>
       ${p.size ? `<div class="prod-size">${p.size}</div>` : ''}
+      ${p.desc ? `<div class="prod-desc">${p.desc}</div>` : ''}
       <div class="prod-bottom">
         <span class="prod-price">${fmt(p.price)}</span>
         <span class="prod-stock ${sc}">${stockLabel(p.stock)}</span>
