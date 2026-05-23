@@ -1782,21 +1782,57 @@ function refreshOrders() {
   loadOrdersHistory().then(renderOrders);
 }
 
-function processOrder(orderId) {
+async function processOrder(orderId) {
   const order = ordersHistory.find(o => o.id === orderId);
   if (!order || order.status === 'PROCESSED') return;
-  runSupabaseQuery(() => supabaseClient.from('orders').update({ status: 'PROCESSED', processed_at: new Date().toISOString() }).eq('id', orderId))
-    .then(({ error }) => {
-      if (error) {
-        console.error('Failed to update order status', error);
-        showNotif('Unable to process order', false);
-        return;
-      }
-      order.status = 'PROCESSED';
-      order.processed_at = new Date();
-      renderOrders();
-      showNotif('Order processed', true);
-    });
+
+  // Update order status first
+  const upd = await runSupabaseQuery(() => supabaseClient.from('orders').update({ status: 'PROCESSED', processed_at: new Date().toISOString() }).eq('id', orderId).select().single());
+  if (upd && upd.error) {
+    console.error('Failed to update order status', upd.error);
+    showNotif('Unable to process order', false);
+    return;
+  }
+
+  // mark locally
+  order.status = 'PROCESSED';
+  order.processed_at = new Date();
+
+  // Create a sales record based on the order
+  const salePayload = {
+    ref: `SALE-${Date.now().toString().slice(-8)}`,
+    customer: order.customer_name || 'Customer',
+    items: order.items || [],
+    subtotal: order.total || 0,
+    discount: 0,
+    grand: order.total || 0,
+    method: 'ORDER',
+    sale_time: new Date().toISOString(),
+  };
+
+  const saleRes = await runSupabaseQuery(() => supabaseClient.from('sales').insert(salePayload).select().single());
+  if (saleRes && saleRes.error) {
+    console.error('Failed to create sales record for order', saleRes.error);
+    // Still show processed status but notify about sale failure
+    renderOrders();
+    showNotif('Order processed (sale record failed)', true);
+    return;
+  }
+
+  const saleData = (saleRes && saleRes.data) ? saleRes.data : (saleRes || null);
+  if (saleData) {
+    const saleObj = {
+      ...saleData,
+      items: Array.isArray(saleData.items) ? saleData.items : JSON.parse(saleData.items || '[]'),
+      time: new Date(saleData.sale_time || saleData.created_at || new Date()),
+      grand: Number(saleData.grand || saleData.total || 0),
+    };
+    salesHistory.unshift(saleObj);
+  }
+
+  renderSales();
+  renderOrders();
+  showNotif('Order processed and recorded as sale', true);
 }
 
 function renderOrders() {
@@ -1822,7 +1858,7 @@ function renderOrders() {
 
   listEl.innerHTML = ordersHistory.map(order => {
     const itemsText = order.items.slice(0, 3).map(i => `${i.name} ×${i.qty}`).join(' · ') + (order.items.length > 3 ? ` +${order.items.length - 3} more` : '');
-    return `<div class="sale-card">
+    return `<div class="sale-card" onclick="showOrderDetails(${order.id})">
       <div class="sale-card-top">
         <div>
           <div class="sale-ref">${order.ref}</div>
@@ -1837,10 +1873,110 @@ function renderOrders() {
       </div>
       <div style="margin-top:12px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
         <div style="font-size:12px;color:var(--muted);">Delivery: ${order.delivery_method}</div>
-        ${order.status === 'NEW' ? `<button class="btn-sm btn-orange" onclick="processOrder(${order.id})">PROCESS</button>` : `<button class="btn-sm btn-outline" disabled>PROCESSED</button>`}
+        ${order.status === 'NEW' ? `<button class="btn-sm btn-orange" onclick="event.stopPropagation();processOrder(${order.id})">PROCESS</button>` : `<button class="btn-sm btn-outline" disabled>PROCESSED</button>`}
       </div>
     </div>`;
   }).join('');
+}
+
+function showOrderDetails(orderId) {
+  const order = ordersHistory.find(o => o.id === orderId);
+  if (!order) return;
+  const modal = document.getElementById('orderDetailModal');
+  const content = document.getElementById('orderDetailContent');
+  const itemsHtml = (order.items || []).map(i => {
+    const lineTotal = (i.price ? Number(i.price) : 0) * (i.qty || 0);
+    return `<tr><td>${escapeHtml(i.name || '')}</td><td style="text-align:center">${i.qty || 0}</td><td style="text-align:right">${fmt(i.price || 0)}</td><td style="text-align:right">${fmt(lineTotal)}</td></tr>`;
+  }).join('');
+
+  content.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;">
+      <div>
+        <div style="font-weight:700;font-size:16px">${order.ref}</div>
+        <div style="color:var(--muted);font-size:12px">${order.status} — ${order.created_at.toLocaleString('en-ZA')}</div>
+      </div>
+      <div>
+        ${order.processed_at ? `<div style="font-size:12px;color:var(--muted)">Processed: ${order.processed_at.toLocaleString('en-ZA')}</div>` : ''}
+      </div>
+    </div>
+    <hr/>
+    <div style="display:flex;gap:24px;flex-wrap:wrap;margin-top:8px;">
+      <div style="flex:1;min-width:220px">
+        <div style="font-weight:600;margin-bottom:6px">Customer</div>
+        <div>${escapeHtml(order.customer_name || '')}</div>
+        <div style="font-size:13px;color:var(--muted);">Phone: ${escapeHtml(order.phone || '')}</div>
+        <div style="font-size:13px;color:var(--muted);">Email: ${escapeHtml(order.email || '')}</div>
+        <div style="font-size:13px;color:var(--muted);margin-top:6px;">Address: ${escapeHtml(order.delivery_address || '')}</div>
+      </div>
+      <div style="flex:1;min-width:220px">
+        <div style="font-weight:600;margin-bottom:6px">Order Details</div>
+        <div style="font-size:13px;color:var(--muted);">Delivery: ${escapeHtml(order.delivery_method || '')}</div>
+        <div style="font-size:13px;color:var(--muted);margin-top:6px;">Notes: ${escapeHtml(order.vin_notes || '')}</div>
+      </div>
+    </div>
+    <hr/>
+    <div style="overflow:auto;max-height:260px;margin-top:8px;">
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead style="text-align:left;color:var(--muted)"><tr><th>Item</th><th style="text-align:center">Qty</th><th style="text-align:right">Price</th><th style="text-align:right">Line</th></tr></thead>
+        <tbody>${itemsHtml}</tbody>
+        <tfoot><tr><td></td><td></td><td style="text-align:right;font-weight:700">Total</td><td style="text-align:right;font-weight:700">${fmt(order.total || 0)}</td></tr></tfoot>
+      </table>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+      <button class="btn-sm btn-outline" onclick="printReceipt(${order.id})">PRINT RECEIPT</button>
+      ${order.status === 'NEW' ? `<button class="btn-sm btn-orange" onclick="processOrder(${order.id});closeOrderDetails();">PROCESS ORDER</button>` : ''}
+      <button class="btn-sm btn-outline" onclick="closeOrderDetails()">CLOSE</button>
+    </div>
+  `;
+  modal.classList.add('open');
+}
+
+function closeOrderDetails() {
+  const modal = document.getElementById('orderDetailModal');
+  if (modal) modal.classList.remove('open');
+}
+
+function printReceipt(orderId) {
+  const order = ordersHistory.find(o => o.id === orderId);
+  if (!order) return;
+  const company = 'Malinda Torque & Fluids';
+  const itemsHtml = (order.items || []).map(i => {
+    const line = (i.price ? Number(i.price) : 0) * (i.qty || 0);
+    return `<tr><td style="padding:6px 0">${escapeHtml(i.name || '')}</td><td style="text-align:center">${i.qty || 0}</td><td style="text-align:right">${fmt(i.price || 0)}</td><td style="text-align:right">${fmt(line)}</td></tr>`;
+  }).join('');
+
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>Receipt ${escapeHtml(order.ref || '')}</title>
+    <style>body{font-family:Helvetica,Arial,sans-serif;color:#111;padding:18px}h2{margin:0}table{width:100%;border-collapse:collapse}td,th{padding:6px 0}hr{border:none;border-top:1px solid #ddd;margin:12px 0}</style>
+    </head><body>
+    <h2>${company}</h2>
+    <div style="margin-top:8px">Order: <strong>${escapeHtml(order.ref || '')}</strong></div>
+    <div>Customer: ${escapeHtml(order.customer_name || '')}</div>
+    <div>Phone: ${escapeHtml(order.phone || '')}</div>
+    <div style="margin-top:8px">${escapeHtml(order.delivery_address || '')}</div>
+    <hr/>
+    <table>
+      <thead><tr><th style="text-align:left">Item</th><th style="text-align:center">Qty</th><th style="text-align:right">Price</th><th style="text-align:right">Line</th></tr></thead>
+      <tbody>${itemsHtml}</tbody>
+      <tfoot><tr><td></td><td></td><td style="text-align:right;font-weight:700">Total</td><td style="text-align:right;font-weight:700">${fmt(order.total || 0)}</td></tr></tfoot>
+    </table>
+    <hr/>
+    <div style="font-size:12px;color:#666">Thank you for your order.</div>
+    <script>window.print();setTimeout(()=>window.close(),500);</script>
+    </body></html>`;
+
+  const w = window.open('', '_blank', 'width=600,height=800');
+  if (!w) {
+    showNotif('Popup blocked. Allow popups to print.', false);
+    return;
+  }
+  w.document.open();
+  w.document.write(html);
+  w.document.close();
+}
+
+function escapeHtml(s) {
+  if (!s) return '';
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
 }
 
 function clearHistory() {
@@ -1866,5 +2002,17 @@ function showNotif(msg, success = false) {
 // ============================================================
 initApp();
 </script>
+  <!-- Order details modal -->
+  <div id="orderDetailModal" class="modal" style="display:none;position:fixed;inset:0;z-index:1200;align-items:center;justify-content:center;padding:24px;">
+    <div style="background:var(--surface);border-radius:8px;max-width:900px;width:100%;box-shadow:0 8px 32px rgba(0,0,0,0.18);overflow:hidden;">
+      <div style="padding:16px;">
+        <div id="orderDetailContent"></div>
+      </div>
+    </div>
+  </div>
+  <style>
+    #orderDetailModal.open { display:flex !important; }
+    #orderDetailModal .btn-sm { margin-left:6px }
+  </style>
 </body>
 </html>
