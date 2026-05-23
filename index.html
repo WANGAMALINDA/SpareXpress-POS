@@ -1201,7 +1201,8 @@ async function loadOrdersHistory() {
   }
   ordersHistory = data.map(o => ({
     ...o,
-    status: o.status || 'NEW',
+    // Normalize status values to uppercase to avoid inconsistent labels
+    status: (o.status || 'NEW').toString().trim().toUpperCase(),
     items: Array.isArray(o.items) ? o.items : JSON.parse(o.items || '[]'),
     created_at: new Date(o.created_at || new Date()),
     processed_at: o.processed_at ? new Date(o.processed_at) : null,
@@ -1815,22 +1816,7 @@ async function processOrder(orderId) {
   }
 
   const now = new Date().toISOString();
-  
-  // Update order status in database
-  const updateResult = await runSupabaseQuery(() => 
-    supabaseClient
-      .from('orders')
-      .update({ status: 'PROCESSED', processed_at: now })
-      .eq('id', orderId)
-  );
-
-  if (updateResult && updateResult.error) {
-    console.error('Failed to update order status', updateResult.error);
-    showNotif('Unable to process order: ' + (updateResult.error.message || 'Database error'), false);
-    return;
-  }
-
-  // Create a sales record based on the order
+  // Create a sales record based on the order first
   const salePayload = {
     ref: `SALE-${Date.now().toString().slice(-8)}`,
     customer: order.customer_name || 'Customer',
@@ -1842,21 +1828,48 @@ async function processOrder(orderId) {
     sale_time: now,
   };
 
-  const saleRes = await runSupabaseQuery(() => supabaseClient.from('sales').insert(salePayload));
+  const saleRes = await runSupabaseQuery(() => supabaseClient.from('sales').insert(salePayload).select().maybeSingle());
   if (saleRes && saleRes.error) {
     console.error('Failed to create sales record for order', saleRes.error);
-    // Still show processed status but notify about sale failure
-    await loadOrdersHistory();
-    renderOrders();
-    showNotif('✓ Order marked as processed (sale record failed)', true);
+    showNotif('Unable to create sales record: ' + (saleRes.error.message || 'Database error'), false);
     return;
   }
 
-  // Reload orders from database to confirm the update persisted
+  if (saleRes && saleRes.data) {
+    const saleData = saleRes.data;
+    const saleObj = {
+      ...saleData,
+      items: Array.isArray(saleData.items) ? saleData.items : JSON.parse(saleData.items || '[]'),
+      time: new Date(saleData.sale_time || saleData.created_at || new Date()),
+      grand: Number(saleData.grand || saleData.total || 0),
+    };
+    salesHistory.unshift(saleObj);
+  }
+
+  // Delete the order from the orders table now that the sale exists
+  const delRes = await runSupabaseQuery(() =>
+    supabaseClient
+      .from('orders')
+      .delete()
+      .eq('id', orderId)
+      .select()
+      .maybeSingle()
+  );
+
+  if (delRes && delRes.error) {
+    console.error('Failed to delete order', delRes.error);
+    // Reload orders to reflect any partial changes and notify user
+    await loadOrdersHistory();
+    renderOrders();
+    showNotif('Order processed but failed to remove from orders table', false);
+    return;
+  }
+
+  // Reload orders and update UI
   await loadOrdersHistory();
   renderSales();
   renderOrders();
-  showNotif('✓ Order processed and recorded as sale', true);
+  showNotif('✓ Order processed and removed from orders table', true);
 }
 
 function renderOrders() {
