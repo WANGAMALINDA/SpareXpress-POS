@@ -26,41 +26,26 @@
   html, body { height: auto; }
   body { overflow: auto; }
   .main { flex-direction: column; }
-
-  /* Product panel becomes full width above cart */
   .product-panel { border-right: none; width: 100%; }
   .cart-panel { width: 100%; border-left: none; border-top: 1px solid var(--border); }
-
-  /* Make product grid denser */
   .product-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
-
-  /* Make topbar and tabs compact */
   .topbar { padding: 8px 12px; height: 48px; gap: 8px; }
   .logo-text { font-size: 14px; }
   .tabs { padding: 0 8px; gap: 6px; overflow-x: auto; }
   .tab-btn { padding: 8px 12px; font-size: 11px; }
-
-  /* Cart adjustments */
   .cart-header { padding: 10px 12px; }
   .cart-panel { max-height: 50vh; overflow: visible; }
   .cart-items-list { max-height: 36vh; overflow-y: auto; }
   .cart-item-row { padding: 8px 10px; }
   .cart-item-total { min-width: 44px; font-size: 13px; }
-
-  /* Forms and inputs full width */
   .customer-bar input, .inv-search, .discount-row input { width: 100%; }
   .inv-actions { flex-wrap: wrap; gap: 8px; }
-
-  /* Modals become nearly full width */
   .add-modal, .receipt-modal { width: calc(100% - 28px); margin: 0 auto; }
-
-  /* Reduce paddings for denser layout */
   .prod-card { padding: 10px; }
   .prod-name { font-size: 14px; }
 }
 
 @media (max-width: 420px) {
-  /* Further compact for small phones */
   .product-grid { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 6px; }
   .logo-text { font-size: 13px; }
   .pos-badge { padding: 2px 6px; font-size: 9px; }
@@ -71,7 +56,7 @@
   .charge-btn { padding: 10px; font-size: 13px; }
   .receipt-modal, .add-modal { padding: 12px; }
 }
-s
+
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   html { height: 100%; }
   body { background: var(--bg); color: var(--text); font-family: 'Barlow', sans-serif; font-size: 14px; height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
@@ -163,7 +148,6 @@ s
   }
   .search-bar input::placeholder { color: var(--muted); }
   .search-bar input:focus { border-color: var(--orange); }
-  .search-bar input:focus + .search-icon { color: var(--orange); }
   .cat-filter {
     padding: 8px 16px;
     background: var(--bg2);
@@ -654,7 +638,7 @@ s
     cursor: pointer;
     border-radius: 2px;
     font-size: 13px;
-    transition: all .15s;
+    transition: all .15px;
     line-height: 1;
   }
   .adj-btn:hover { border-color: var(--orange); color: var(--orange); }
@@ -728,6 +712,8 @@ s
     transition: border-color .15s;
   }
   .sale-card:hover { border-color: var(--orange); }
+  .sale-card.processed { opacity: 0.45; filter: grayscale(0.4); }
+  .sale-card.processed:hover { border-color: var(--border); cursor: default; }
   .sale-card-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; }
   .sale-ref { font-family: 'Barlow Condensed', sans-serif; font-size: 14px; font-weight: 800; color: var(--orange); }
   .sale-time { font-size: 11px; color: var(--muted); }
@@ -1074,8 +1060,6 @@ s
   </div>
 </div>
 
-
-
 <!-- NOTIFICATION -->
 <div class="notif" id="notif"></div>
 
@@ -1201,11 +1185,11 @@ async function loadOrdersHistory() {
   }
   ordersHistory = data.map(o => ({
     ...o,
-    // Normalize status values to uppercase to avoid inconsistent labels
     status: (o.status || 'NEW').toString().trim().toUpperCase(),
     items: Array.isArray(o.items) ? o.items : JSON.parse(o.items || '[]'),
     created_at: new Date(o.created_at || new Date()),
     processed_at: o.processed_at ? new Date(o.processed_at) : null,
+    _processing: false,
   }));
 }
 
@@ -1292,7 +1276,6 @@ function initApp() {
   setInterval(() => {
     if (activeTab === 'orders') {
       loadOrdersHistory().then(() => {
-        // Only re-render if the tab is still showing orders
         if (activeTab === 'orders') renderOrders();
       });
     }
@@ -1344,7 +1327,6 @@ function switchTab(tab, btn) {
   if (tab === 'inventory') renderInventory();
   if (tab === 'sales') renderSales();
   if (tab === 'orders') {
-    // Always reload orders from database when switching to orders tab
     loadOrdersHistory().then(renderOrders);
   }
 }
@@ -1444,7 +1426,6 @@ function renderCart() {
 
   if (!items.length) {
     emptyEl.style.display = 'flex';
-    // remove existing rows
     listEl.querySelectorAll('.cart-item-row').forEach(e => e.remove());
     countEl.textContent = '—';
     return;
@@ -1600,7 +1581,6 @@ function renderInventory() {
   let list = products;
   if (q) list = list.filter(p => p.name.toLowerCase().includes(q) || p.cat.toLowerCase().includes(q));
 
-  // Stats
   const totalItems = products.length;
   const totalStock = products.reduce((s, p) => s + p.stock, 0);
   const lowStock = products.filter(p => p.stock > 0 && p.stock <= 5).length;
@@ -1749,7 +1729,6 @@ function saveProduct() {
 // SALES HISTORY
 // ============================================================
 function renderSales() {
-  // Stats
   const todayStr = new Date().toDateString();
   const todaySales = salesHistory.filter(s => s.time.toDateString() === todayStr);
   const todayRevenue = todaySales.reduce((s, x) => s + x.grand, 0);
@@ -1804,19 +1783,21 @@ function refreshOrders() {
   });
 }
 
+// ============================================================
+// PROCESS ORDER — Fixed: direct delete, no silent failures
+// ============================================================
 async function processOrder(orderId) {
   const order = ordersHistory.find(o => o.id === orderId);
-  if (!order) {
-    showNotif('Order not found', false);
-    return;
-  }
-  if (order.status === 'PROCESSED') {
-    showNotif('Order already processed', true);
-    return;
-  }
+  if (!order) { showNotif('Order not found', false); return; }
+  if (order.status === 'PROCESSED') { showNotif('Order already processed', true); return; }
+  if (order._processing) return;
+
+  order._processing = true;
+  renderOrders();
 
   const now = new Date().toISOString();
-  // Create a sales record based on the order first
+
+  // 1. Write a sales record for this order
   const salePayload = {
     ref: `SALE-${Date.now().toString().slice(-8)}`,
     customer: order.customer_name || 'Customer',
@@ -1828,59 +1809,56 @@ async function processOrder(orderId) {
     sale_time: now,
   };
 
-  const saleRes = await runSupabaseQuery(() => supabaseClient.from('sales').insert(salePayload).select().maybeSingle());
-  if (saleRes && saleRes.error) {
-    console.error('Failed to create sales record for order', saleRes.error);
-    showNotif('Unable to create sales record: ' + (saleRes.error.message || 'Database error'), false);
-    return;
-  }
-
-  if (saleRes && saleRes.data) {
-    const saleData = saleRes.data;
-    const saleObj = {
-      ...saleData,
-      items: Array.isArray(saleData.items) ? saleData.items : JSON.parse(saleData.items || '[]'),
-      time: new Date(saleData.sale_time || saleData.created_at || new Date()),
-      grand: Number(saleData.grand || saleData.total || 0),
-    };
-    salesHistory.unshift(saleObj);
-  }
-
-  // Delete the order from the orders table now that the sale exists
-  const delRes = await runSupabaseQuery(() =>
-    supabaseClient
-      .from('orders')
-      .delete()
-      .eq('id', orderId)
-      .select()
-      .maybeSingle()
+  const { data: saleData, error: saleError } = await runSupabaseQuery(() =>
+    supabaseClient.from('sales').insert(salePayload).select().maybeSingle()
   );
 
-  if (delRes && delRes.error) {
-    console.error('Failed to delete order', delRes.error);
-    // Reload orders to reflect any partial changes and notify user
-    await loadOrdersHistory();
+  if (saleError) {
+    console.error('Failed to create sales record:', saleError);
+    order._processing = false;
     renderOrders();
-    showNotif('Order processed but failed to remove from orders table', false);
+    showNotif('Failed to create sales record: ' + (saleError.message || 'DB error'), false);
     return;
   }
 
-  // Reload orders and update UI
+  if (saleData) {
+    salesHistory.unshift({
+      ...saleData,
+      items: Array.isArray(saleData.items) ? saleData.items : JSON.parse(saleData.items || '[]'),
+      time: new Date(saleData.sale_time || saleData.created_at || now),
+      grand: Number(saleData.grand || saleData.total || 0),
+    });
+  }
+
+  // 2. Mark the order as processed in the DB.
+  const { error: updateError } = await runSupabaseQuery(() =>
+    supabaseClient
+      .from('orders')
+      .update({ status: 'PROCESSED', processed_at: now })
+      .eq('id', orderId)
+  );
+
+  if (updateError) {
+    console.error('Failed to update order status in DB:', updateError);
+    order._processing = false;
+    renderOrders();
+    showNotif('Sale saved but order update failed: ' + (updateError.message || 'DB error'), false);
+    return;
+  }
+
+  // Reload the orders from the DB so the new status is reflected.
   await loadOrdersHistory();
-  renderSales();
   renderOrders();
-  showNotif('✓ Order processed and removed from orders table', true);
+  renderSales();
+  showNotif('Order processed', true);
 }
 
 function renderOrders() {
   const totalOrders = ordersHistory.length;
-  const newOrders = ordersHistory.filter(o => o.status === 'NEW').length;
-  const processedOrders = ordersHistory.filter(o => o.status === 'PROCESSED').length;
+  const pendingOrders = ordersHistory.filter(o => o.status !== 'PROCESSED').length;
 
   document.getElementById('ordersStats').innerHTML = `
     <div class="stat-card"><div class="stat-label">Total Orders</div><div class="stat-val">${totalOrders}</div></div>
-    <div class="stat-card"><div class="stat-label">New Orders</div><div class="stat-val orange">${newOrders}</div></div>
-    <div class="stat-card"><div class="stat-label">Processed</div><div class="stat-val green">${processedOrders}</div></div>
   `;
 
   const listEl = document.getElementById('ordersList');
@@ -1893,9 +1871,14 @@ function renderOrders() {
     return;
   }
 
-  listEl.innerHTML = ordersHistory.map(order => {
+  const sortedOrders = ordersHistory.slice().sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+  listEl.innerHTML = sortedOrders.map(order => {
     const itemsText = order.items.slice(0, 3).map(i => `${i.name} ×${i.qty}`).join(' · ') + (order.items.length > 3 ? ` +${order.items.length - 3} more` : '');
-    return `<div class="sale-card" onclick="showOrderDetails(${order.id})">
+    const isProcessed = order.status === 'PROCESSED';
+    const cardClass = isProcessed ? 'sale-card processed' : 'sale-card';
+    const clickHandler = isProcessed ? '' : `onclick="showOrderDetails(${order.id})"`;
+    return `<div class="${cardClass}" ${clickHandler}>
       <div class="sale-card-top">
         <div>
           <div class="sale-ref">${order.ref}</div>
@@ -1906,11 +1889,9 @@ function renderOrders() {
       <div class="sale-items-summary">${itemsText}</div>
       <div class="sale-card-bottom">
         <span class="sale-total">${fmt(order.total)}</span>
-        <span class="sale-method ${order.status === 'NEW' ? 'orange' : 'green'}">${order.status}</span>
       </div>
       <div style="margin-top:12px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
         <div style="font-size:12px;color:var(--muted);">Delivery: ${order.delivery_method}</div>
-        ${order.status === 'NEW' ? `<button class="btn-sm btn-orange" onclick="event.stopPropagation();processOrder(${order.id})">PROCESS</button>` : `<button class="btn-sm btn-outline" disabled>PROCESSED</button>`}
       </div>
     </div>`;
   }).join('');
@@ -1930,13 +1911,10 @@ function showOrderDetails(orderId) {
     <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;">
       <div>
         <div style="font-weight:700;font-size:16px">${order.ref}</div>
-        <div style="color:var(--muted);font-size:12px">${order.status} — ${order.created_at.toLocaleString('en-ZA')}</div>
-      </div>
-      <div>
-        ${order.processed_at ? `<div style="font-size:12px;color:var(--muted)">Processed: ${order.processed_at.toLocaleString('en-ZA')}</div>` : ''}
+        <div style="color:var(--muted);font-size:12px">${order.created_at.toLocaleString('en-ZA')}</div>
       </div>
     </div>
-    <hr/>
+    <hr style="border:none;border-top:1px solid var(--border);margin:12px 0;"/>
     <div style="display:flex;gap:24px;flex-wrap:wrap;margin-top:8px;">
       <div style="flex:1;min-width:220px">
         <div style="font-weight:600;margin-bottom:6px">Customer</div>
@@ -1951,7 +1929,7 @@ function showOrderDetails(orderId) {
         <div style="font-size:13px;color:var(--muted);margin-top:6px;">Notes: ${escapeHtml(order.vin_notes || '')}</div>
       </div>
     </div>
-    <hr/>
+    <hr style="border:none;border-top:1px solid var(--border);margin:12px 0;"/>
     <div style="overflow:auto;max-height:260px;margin-top:8px;">
       <table style="width:100%;border-collapse:collapse;font-size:13px">
         <thead style="text-align:left;color:var(--muted)"><tr><th>Item</th><th style="text-align:center">Qty</th><th style="text-align:right">Price</th><th style="text-align:right">Line</th></tr></thead>
@@ -1961,7 +1939,12 @@ function showOrderDetails(orderId) {
     </div>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
       <button class="btn-sm btn-outline" onclick="printOrderReceipt(${order.id})">PRINT RECEIPT</button>
-      ${order.status === 'NEW' ? `<button class="btn-sm btn-orange" onclick="processOrder(${order.id});closeOrderDetails();">PROCESS ORDER</button>` : ''}
+      ${order._processing
+        ? `<button class="btn-sm btn-orange" disabled>PROCESSING...</button>`
+        : order.status !== 'PROCESSED'
+          ? `<button class="btn-sm btn-orange" onclick="processOrder(${order.id});closeOrderDetails();">PROCESS ORDER</button>`
+          : ''
+      }
       <button class="btn-sm btn-outline" onclick="closeOrderDetails()">CLOSE</button>
     </div>
   `;
@@ -2019,21 +2002,32 @@ function printOrderReceipt(orderId) {
 
 function escapeHtml(s) {
   if (!s) return '';
-  const htmlEscapes = {
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#39;'
-  };
+  const htmlEscapes = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
   return String(s).replace(/[&<>"']/g, c => htmlEscapes[c]);
 }
 
-function clearHistory() {
+async function clearHistory() {
   if (!salesHistory.length) return;
-  if (!confirm('Clear all sales history?')) return;
+  if (!confirm('Clear ALL sales history? This cannot be undone.')) return;
+
+  showNotif('Clearing history...', false);
+
+  // Delete every row from the sales table.
+  // Supabase requires a filter on DELETE — use a always-true filter: id > 0
+  const { error } = await supabaseClient
+    .from('sales')
+    .delete()
+    .gt('id', 0);           // matches all rows
+
+  if (error) {
+    console.error('Failed to clear sales history from DB:', error);
+    showNotif('DB delete failed: ' + (error.message || 'Unknown error'), false);
+    return;
+  }
+
   salesHistory = [];
   renderSales();
+  showNotif('Sales history cleared', true);
 }
 
 // ============================================================
@@ -2052,17 +2046,13 @@ function showNotif(msg, success = false) {
 // ============================================================
 initApp();
 </script>
-  <!-- Order details modal -->
-  <div id="orderDetailModal" class="modal" style="display:none;position:fixed;inset:0;z-index:1200;align-items:center;justify-content:center;padding:24px;">
-    <div style="background:var(--surface);border-radius:8px;max-width:900px;width:100%;box-shadow:0 8px 32px rgba(0,0,0,0.18);overflow:hidden;">
-      <div style="padding:16px;">
-        <div id="orderDetailContent"></div>
-      </div>
-    </div>
+
+<!-- Order details modal -->
+<div id="orderDetailModal" class="modal-overlay" style="z-index:1200;">
+  <div style="background:var(--bg2);border:1px solid var(--border);border-radius:2px;max-width:860px;width:calc(100% - 40px);max-height:90vh;overflow-y:auto;padding:24px;position:relative;">
+    <div id="orderDetailContent"></div>
   </div>
-  <style>
-    #orderDetailModal.open { display:flex !important; }
-    #orderDetailModal .btn-sm { margin-left:6px }
-  </style>
+</div>
+
 </body>
 </html>
