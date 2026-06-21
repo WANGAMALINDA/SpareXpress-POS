@@ -893,10 +893,17 @@
             <span>Discount</span>
             <span id="discountDisplay">−R 0,00</span>
           </div>
+          <div class="total-row discount" id="vatRow" style="display:none;">
+            <span>VAT (10%)</span>
+            <span id="vatDisplay">R 0,00</span>
+          </div>
           <div class="total-row grand">
             <span>TOTAL</span>
             <span id="grandDisplay">R 0,00</span>
           </div>
+        </div>
+        <div style="font-size: 11px; color: var(--muted); margin-top: 8px; text-align: center; font-family: 'Barlow', sans-serif;">
+          Total amount includes 10% VAT
         </div>
         <!-- Payment method -->
         <div class="payment-methods">
@@ -990,6 +997,9 @@
         <div class="receipt-total-row" id="rDisRow" style="display:none;">
           <span>Discount</span><span id="rDis">—</span>
         </div>
+        <div class="receipt-total-row" id="rVatRow" style="display:none;">
+          <span>VAT (10%)</span><span id="rVat">—</span>
+        </div>
         <div class="receipt-total-row grand">
           <span>TOTAL</span><span id="rTotal">—</span>
         </div>
@@ -997,6 +1007,9 @@
       <div style="font-size:12px;color:var(--muted);display:flex;justify-content:space-between;margin-bottom:8px;">
         <span>Payment: <span id="rPayMethod" style="color:var(--text);">—</span></span>
         <span>Cashier: <span style="color:var(--text);">Admin</span></span>
+      </div>
+      <div style="font-size:11px;color:var(--muted);text-align:center;margin-bottom:8px;">
+        *Includes 10% VAT
       </div>
       <div class="receipt-footer">
         WhatsApp: 073 022 1618 | sparexpressauto@gmail.com<br>
@@ -1245,6 +1258,7 @@ async function saveSaleToDB(sale) {
     items: sale.items.map(i => ({ id: i.id, name: i.name, qty: i.qty, price: i.price })),
     subtotal: sale.subtotal,
     discount: sale.discount,
+    vat: sale.vat,
     grand: sale.grand,
     method: sale.method,
     sale_time: sale.time.toISOString(),
@@ -1463,7 +1477,10 @@ function updateTotals() {
   const dVal = parseFloat(document.getElementById('discountVal').value) || 0;
   if (discountType === 'R') discount = Math.min(dVal, subtotal);
   else discount = subtotal * (Math.min(dVal, 100) / 100);
-  const grand = subtotal - discount;
+  
+  const amountAfterDiscount = subtotal - discount;
+  const vat = amountAfterDiscount * 0.10;
+  const grand = amountAfterDiscount + vat;
 
   document.getElementById('subtotalDisplay').textContent = fmt(subtotal);
   document.getElementById('grandDisplay').textContent = fmt(grand);
@@ -1474,6 +1491,14 @@ function updateTotals() {
     document.getElementById('discountDisplay').textContent = '−' + fmt(discount);
   } else {
     discRow.style.display = 'none';
+  }
+
+  const vatRow = document.getElementById('vatRow');
+  if (vat > 0) {
+    vatRow.style.display = 'flex';
+    document.getElementById('vatDisplay').textContent = fmt(vat);
+  } else {
+    vatRow.style.display = 'none';
   }
 
   const chargeBtn = document.getElementById('chargeBtn');
@@ -1512,7 +1537,9 @@ function processCharge() {
   let discount = 0;
   if (discountType === 'R') discount = Math.min(dVal, subtotal);
   else discount = subtotal * (Math.min(dVal, 100) / 100);
-  const grand = subtotal - discount;
+  const amountAfterDiscount = subtotal - discount;
+  const vat = amountAfterDiscount * 0.10;
+  const grand = amountAfterDiscount + vat;
   const customer = document.getElementById('customerName').value.trim() || 'Walk-in';
   const ref = genRef();
   const now = new Date();
@@ -1529,7 +1556,7 @@ function processCharge() {
   // Record sale
   const sale = {
     ref, customer, items: items.map(i => ({ ...i })),
-    subtotal, discount, grand,
+    subtotal, discount, vat, grand,
     method: paymentMethod,
     time: now,
   };
@@ -1554,6 +1581,14 @@ function showReceipt(sale) {
     document.getElementById('rDis').textContent = '−' + fmt(sale.discount);
   } else {
     disRow.style.display = 'none';
+  }
+
+  const vatRow = document.getElementById('rVatRow');
+  if (sale.vat > 0) {
+    vatRow.style.display = 'flex';
+    document.getElementById('rVat').textContent = fmt(sale.vat);
+  } else {
+    vatRow.style.display = 'none';
   }
 
   document.getElementById('rItems').innerHTML = sale.items.map(i =>
@@ -1804,7 +1839,8 @@ async function processOrder(orderId) {
     items: order.items || [],
     subtotal: order.total || 0,
     discount: 0,
-    grand: order.total || 0,
+    vat: (order.total || 0) * 0.10,
+    grand: (order.total || 0) * 1.10,
     method: 'ORDER',
     sale_time: now,
   };
