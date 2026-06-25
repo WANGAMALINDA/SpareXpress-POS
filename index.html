@@ -1252,7 +1252,6 @@ async function saveSaleToDB(sale) {
     items: sale.items.map(i => ({ id: i.id, name: i.name, qty: i.qty, price: i.price })),
     subtotal: sale.subtotal,
     discount: sale.discount,
-    vat: sale.vat,
     grand: sale.grand,
     method: sale.method,
     sale_time: sale.time.toISOString(),
@@ -1541,7 +1540,7 @@ function processCharge() {
   // Record sale
   const sale = {
     ref, customer, items: items.map(i => ({ ...i })),
-    subtotal, discount, vat: 0, grand,
+    subtotal, discount, grand,
     method: paymentMethod,
     time: now,
   };
@@ -1819,7 +1818,6 @@ async function processOrder(orderId) {
     items: order.items || [],
     subtotal: order.total || 0,
     discount: 0,
-    vat: 0,
     grand: order.total || 0,
     method: 'ORDER',
     sale_time: now,
